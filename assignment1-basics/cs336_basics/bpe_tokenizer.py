@@ -8,6 +8,7 @@ from collections import Counter
 from typing import BinaryIO
 import argparse
 import json
+from tqdm import tqdm
 
 class Tokenizer():
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str]):
@@ -29,7 +30,9 @@ class Tokenizer():
 
         if self.special_tokens:
             # create a regex pattern to split on the special tokens
-            special_pattern = "|".join(re.escape(token) for token in self.special_tokens)
+            # Sort by length (descending) to match longer tokens first (greedy matching)
+            sorted_tokens = sorted(self.special_tokens, key=len, reverse=True)
+            special_pattern = "|".join(re.escape(token) for token in sorted_tokens)
             self.special_token_pattern = re.compile(f"({special_pattern})")
         else:
             self.special_token_pattern = None
@@ -482,7 +485,12 @@ def train_bpe_parallel(
     # Step 5: Process chunks in parallel to get word frequencies
     print("Pre-tokenizing corpus in parallel...")
     with Pool(processes=num_processes) as pool:
-        chunk_results = pool.map(process_chunk, chunk_args)
+        chunk_results = list(tqdm(
+            pool.imap(process_chunk, chunk_args),
+            total=len(chunk_args),
+            desc="Processing chunks",
+            unit="chunk"
+        ))
     
     # Step 6: Combine all word frequency counters
     print("Combining results...")
@@ -510,10 +518,13 @@ def train_bpe_parallel(
     # Progress tracking
     num_merges_needed = vocab_size - len(vocab)
     
+    # Create progress bar for merges
+    pbar = tqdm(total=num_merges_needed, desc="BPE merges", unit="merge")
+    
     while len(vocab) < vocab_size:
         # If no pairs left then exit
         if not pair_freqs:
-            print(f"No more pairs to merge. Final vocab size: {len(vocab)}")
+            print(f"\nNo more pairs to merge. Final vocab size: {len(vocab)}")
             break
         
         # Find the most frequent pair
@@ -527,10 +538,8 @@ def train_bpe_parallel(
         next_token_id += 1
         merges.append((first, second))
         
-        # Progress update
-        if len(merges) % 100 == 0:
-            progress = len(merges) / num_merges_needed * 100
-            print(f"Progress: {len(merges)}/{num_merges_needed} merges ({progress:.1f}%)")
+        # Update progress bar
+        pbar.update(1)
         
         # Remove the merged pair from pair_freqs
         del pair_freqs[best_pair]
@@ -589,10 +598,13 @@ def train_bpe_parallel(
             
             word_tokens[word] = new_tokens
     
+    # Close progress bar
+    pbar.close()
+    
     print(f"Training complete! Final vocab size: {len(vocab)}")
     return vocab, merges
 
-# python cs336_basics/bpe_tokenizer.py --input_path="../data/TinyStoriesV2-GPT4-valid.txt" --vocab_size=10000 --special_tokens="<|endoftext|>" --num_processes=4 
+# python cs336_basics/bpe_tokenizer.py --input_path="data/TinyStoriesV2-GPT4-valid.txt" --vocab_size=10000 --special_tokens="<|endoftext|>" --num_processes=4 
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Train a BPE tokenizer on a corpus')
@@ -608,7 +620,6 @@ if __name__ == "__main__":
     num_processes = args.num_processes
 
     args = parser.parse_args()
-    vocab_size = 10000
     special_tokens = ["<|endoftext|>"]
     
     # Train with parallel processing
@@ -616,7 +627,7 @@ if __name__ == "__main__":
         input_path,
         vocab_size,
         special_tokens,
-        num_processes=4  # Adjust based on your CPU
+        num_processes=num_processes
     )
     
     # Save vocabulary
