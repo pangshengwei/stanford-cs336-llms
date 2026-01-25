@@ -9,6 +9,7 @@ from typing import BinaryIO
 import argparse
 import json
 from tqdm import tqdm
+import gc
 
 class Tokenizer():
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str]):
@@ -386,17 +387,18 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]) -> tu
 
     return vocab, merges
 
-def process_chunk(args: tuple[str, int, int, str, list[str]]) -> Counter:
+def process_chunk(args: tuple[str, int, int, str, list[str], int]) -> Counter:
     """
     Process a single chunk of the file and return word frequencies.
+    Uses streaming approach for large chunks to avoid OOM.
     
     Args:
-        args: Tuple of (filepath, start_byte, end_byte, PAT, special_tokens)
+        args: Tuple of (filepath, start_byte, end_byte, PAT, special_tokens, max_sub_chunk_size)
     
     Returns:
         Counter of word frequencies for this chunk
     """
-    filepath, start, end, PAT, special_tokens = args
+    filepath, start, end, PAT, special_tokens, max_sub_chunk_size = args
     
     # Create regex pattern to split on special tokens
     if special_tokens:
@@ -406,28 +408,68 @@ def process_chunk(args: tuple[str, int, int, str, list[str]]) -> Counter:
         special_token_pattern = None
     
     word_freqs = Counter()
+    chunk_size = end - start
     
-    # Read the chunk
-    with open(filepath, 'rb') as f:
-        f.seek(start)
-        chunk_bytes = f.read(end - start)
-        chunk_text = chunk_bytes.decode('utf-8', errors='ignore')
-        
-        # Split on special tokens to prevent merging across boundaries
-        if special_token_pattern:
-            segments = special_token_pattern.split(chunk_text)
-        else:
-            segments = [chunk_text]
-        
-        # Process each segment separately
-        for segment in segments:
-            if not segment or segment in special_tokens:
-                continue
+    # If chunk is small enough, process it all at once
+    if chunk_size <= max_sub_chunk_size:
+        with open(filepath, 'rb') as f:
+            f.seek(start)
+            chunk_bytes = f.read(end - start)
+            chunk_text = chunk_bytes.decode('utf-8', errors='ignore')
             
-            # Apply pre-tokenization pattern
-            words = re.findall(PAT, segment)
-            for word in words:
-                word_freqs[word.encode('utf-8')] += 1
+            # Split on special tokens to prevent merging across boundaries
+            if special_token_pattern:
+                segments = special_token_pattern.split(chunk_text)
+            else:
+                segments = [chunk_text]
+            
+            # Process each segment separately
+            for segment in segments:
+                if not segment or segment in special_tokens:
+                    continue
+                
+                # Apply pre-tokenization pattern
+                words = re.findall(PAT, segment)
+                for word in words:
+                    word_freqs[word.encode('utf-8')] += 1
+    else:
+        # For large chunks, process in sub-chunks with overlap to handle boundary cases
+        current_pos = start
+        overlap_size = 1024  # 1KB overlap to handle tokens that might span boundaries
+        
+        with open(filepath, 'rb') as f:
+            while current_pos < end:
+                # Calculate sub-chunk boundaries
+                sub_chunk_end = min(current_pos + max_sub_chunk_size, end)
+                
+                # Read sub-chunk
+                f.seek(current_pos)
+                sub_chunk_bytes = f.read(sub_chunk_end - current_pos)
+                
+                # Decode with error handling
+                sub_chunk_text = sub_chunk_bytes.decode('utf-8', errors='ignore')
+                
+                # Split on special tokens
+                if special_token_pattern:
+                    segments = special_token_pattern.split(sub_chunk_text)
+                else:
+                    segments = [sub_chunk_text]
+                
+                # Process segments
+                for segment in segments:
+                    if not segment or segment in special_tokens:
+                        continue
+                    
+                    words = re.findall(PAT, segment)
+                    for word in words:
+                        word_freqs[word.encode('utf-8')] += 1
+                
+                # Move to next sub-chunk, with some overlap to avoid missing tokens at boundaries
+                # But only if we're not at the end
+                if sub_chunk_end < end:
+                    current_pos = sub_chunk_end - overlap_size
+                else:
+                    break
     
     return word_freqs
 
@@ -435,16 +477,19 @@ def train_bpe_parallel(
     input_path: str,
     vocab_size: int,
     special_tokens: list[str],
-    num_processes: int = None
+    num_processes: int = None,
+    max_file_size_gb: float = 5.0
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     Train a BPE tokenizer on the input corpus using parallel processing.
+    Automatically uses streaming approach for large files to avoid OOM.
     
     Args:
         input_path: Path to the input corpus
         vocab_size: Size of the vocabulary
         special_tokens: Special tokens to add to the vocabulary
         num_processes: Number of processes to use (default: cpu_count())
+        max_file_size_gb: If file is larger than this (in GB), use streaming approach (default: 5.0)
     
     Returns:
         Tuple of (vocab, merges)
@@ -452,7 +497,23 @@ def train_bpe_parallel(
     if num_processes is None:
         num_processes = cpu_count()
     
+    # Check file size
+    file_size_bytes = os.path.getsize(input_path)
+    file_size_gb = file_size_bytes / (1024 ** 3)
+    
     print(f"Training BPE with {num_processes} processes...")
+    print(f"Input file size: {file_size_gb:.2f} GB")
+    
+    # Determine if we need streaming approach
+    use_streaming = file_size_gb > max_file_size_gb
+    if use_streaming:
+        print(f"File size exceeds {max_file_size_gb} GB threshold. Using streaming approach to avoid OOM.")
+        # For streaming, use smaller sub-chunks (e.g., 100MB per sub-chunk)
+        max_sub_chunk_size = 100 * 1024 * 1024  # 100 MB
+    else:
+        print(f"File size is within {max_file_size_gb} GB threshold. Using standard approach.")
+        # For smaller files, can use larger chunks
+        max_sub_chunk_size = file_size_bytes  # No sub-chunking needed
     
     # Step 1: Initialize vocab with all individual bytes
     vocab = {i: bytes([i]) for i in range(256)}
@@ -465,11 +526,19 @@ def train_bpe_parallel(
     
     # Step 3: Find chunk boundaries at special token locations
     print("Finding chunk boundaries...")
+    
+    # For large files, use more chunks to distribute work better
+    if use_streaming:
+        # Use more chunks for better parallelization (e.g., 2-4x the number of processes)
+        desired_chunks = num_processes * 2
+    else:
+        desired_chunks = num_processes
+    
     with open(input_path, 'rb') as f:
         boundaries = find_chunk_boundaries(
             f,
-            num_processes,
-            b"<|endoftext|>"  # Assuming this is your special token
+            desired_chunks,
+            special_tokens[0].encode('utf-8') if special_tokens else b"\n"
         )
     
     print(f"Split file into {len(boundaries) - 1} chunks")
@@ -478,25 +547,31 @@ def train_bpe_parallel(
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     
     chunk_args = [
-        (input_path, start, end, PAT, special_tokens)
+        (input_path, start, end, PAT, special_tokens, max_sub_chunk_size)
         for start, end in zip(boundaries[:-1], boundaries[1:])
     ]
     
     # Step 5: Process chunks in parallel to get word frequencies
+    # Use imap_unordered for better memory efficiency - results are processed as they arrive
     print("Pre-tokenizing corpus in parallel...")
+    word_freqs = Counter()
+    
     with Pool(processes=num_processes) as pool:
-        chunk_results = list(tqdm(
-            pool.imap(process_chunk, chunk_args),
+        # Process and combine results incrementally to reduce peak memory usage
+        for i, chunk_counter in enumerate(tqdm(
+            pool.imap_unordered(process_chunk, chunk_args),
             total=len(chunk_args),
             desc="Processing chunks",
             unit="chunk"
-        ))
-    
-    # Step 6: Combine all word frequency counters
-    print("Combining results...")
-    word_freqs = Counter()
-    for chunk_counter in chunk_results:
-        word_freqs.update(chunk_counter)
+        )):
+            # Update word frequencies incrementally
+            word_freqs.update(chunk_counter)
+            # Allow garbage collection of the chunk_counter
+            del chunk_counter
+            
+            # For very large files, periodically force garbage collection
+            if use_streaming and i % 10 == 0:
+                gc.collect()
     
     print(f"Found {len(word_freqs)} unique pre-tokens")
     
@@ -605,6 +680,8 @@ def train_bpe_parallel(
     return vocab, merges
 
 # python cs336_basics/bpe_tokenizer.py --input_path="data/TinyStoriesV2-GPT4-valid.txt" --vocab_size=10000 --special_tokens="<|endoftext|>" --num_processes=4 
+# python cs336_basics/bpe_tokenizer.py --input_path="data/owt_train.txt" --vocab_size=32000 --special_tokens="<|endoftext|>" --num_processes=2 
+
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Train a BPE tokenizer on a corpus')
