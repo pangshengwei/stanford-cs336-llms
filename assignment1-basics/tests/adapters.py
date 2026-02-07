@@ -4,7 +4,7 @@ import os
 from collections.abc import Iterable
 from typing import IO, Any, BinaryIO
 from cs336_basics.bpe_tokenizer import train_bpe_parallel, Tokenizer
-from cs336_basics.transformer import Linear, Embedding, RMSNorm, SwiGLU, RoPE, SiLU, Softmax
+from cs336_basics.transformer import Linear, Embedding, RMSNorm, SwiGLU, RoPE, SiLU, Softmax, TransformerBlock
 import numpy.typing as npt
 import torch
 from jaxtyping import Bool, Float, Int
@@ -156,7 +156,7 @@ def run_multihead_self_attention(
     mha.q_proj.weight.data = q_proj_weight
     mha.k_proj.weight.data = k_proj_weight
     mha.v_proj.weight.data = v_proj_weight
-    mha.o_proj.weight.data = o_proj_weight
+    mha.output_proj.weight.data = o_proj_weight
     
     # Run forward pass
     return mha(in_features)
@@ -212,7 +212,7 @@ def run_multihead_self_attention_with_rope(
     mha.q_proj.weight.data = q_proj_weight
     mha.k_proj.weight.data = k_proj_weight
     mha.v_proj.weight.data = v_proj_weight
-    mha.o_proj.weight.data = o_proj_weight
+    mha.output_proj.weight.data = o_proj_weight
     
     # Run forward pass with token positions
     return mha(in_features, token_positions=token_positions)
@@ -311,7 +311,17 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    block = TransformerBlock(
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        theta=theta,
+        max_seq_len=max_seq_len,
+        device=in_features.device,
+        dtype=in_features.dtype
+    )
+    block.load_state_dict(weights)
+    return block(in_features)
 
 
 def run_transformer_lm(

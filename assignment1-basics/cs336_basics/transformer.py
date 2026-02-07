@@ -281,7 +281,7 @@ class MultiheadSelfAttention(nn.Module):
         self.v_proj = Linear(d_model, d_model, device=device, dtype=dtype)
         
         # Output projection W_O ∈ R^(d_model × d_model)
-        self.o_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+        self.output_proj = Linear(d_model, d_model, device=device, dtype=dtype)
     
     def forward(
         self,
@@ -334,8 +334,83 @@ class MultiheadSelfAttention(nn.Module):
         attn_output = attn_output.reshape(batch_size, seq_len, d_model)
         
         # Step 7: Apply output projection, Shape: (batch_size, seq_len, d_model)
-        output = self.o_proj(attn_output)
+        output = self.output_proj(attn_output)
         
         return output
 
-        
+class TransformerBlock(nn.Module):
+    """
+    Pre-norm Transformer block with two sublayers:
+    1. Multi-head self-attention with RoPE
+    2. Position-wise feed-forward network (SwiGLU)
+
+    Each sublayer follows: output = input + Sublayer(RMSNorm(input))
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        theta: float = 10000.0,
+        max_seq_len: int = 2048,
+        device=None,
+        dtype=None
+    ):
+        """
+        Args:
+            d_model: Dimensionality of the Transformer block inputs.
+            num_heads: Number of heads to use in multi-head self-attention.
+            d_ff: Dimensionality of the position-wise feed-forward inner layer.
+            theta: Base value for RoPE frequency calculation.
+            max_seq_len: Maximum sequence length for RoPE precomputation.
+            device: Device to place parameters on.
+            dtype: Data type for parameters.
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+
+        # RMSNorm layers for each sublayer (named ln1, ln2 to match test expectations)
+        self.ln1 = RMSNorm(d_model, device=device, dtype=dtype)
+        self.ln2 = RMSNorm(d_model, device=device, dtype=dtype)
+
+        # Initialize RoPE for positional encoding
+        head_dim = d_model // num_heads
+        rope = RoPE(theta=theta, d_k=head_dim, max_seq_len=max_seq_len, device=device)
+
+        # Multi-head self-attention with RoPE
+        self.attn = MultiheadSelfAttention(
+            d_model=d_model,
+            num_heads=num_heads,
+            rope=rope,
+            device=device,
+            dtype=dtype
+        )
+
+        # Position-wise feed-forward network (SwiGLU)
+        self.ffn = SwiGLU(d_model=d_model, d_ff=d_ff, device=device, dtype=dtype)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        token_positions: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """
+        Forward pass through the Transformer block.
+
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, d_model)
+            token_positions: Optional token positions for RoPE
+
+        Returns:
+            Output tensor of shape (batch_size, seq_len, d_model)
+        """
+        # Sublayer 1: y = x + MultiHeadSelfAttention(RMSNorm(x))
+        y = x + self.attn(self.ln1(x), token_positions=token_positions)
+
+        # Sublayer 2: output = y + FeedForward(RMSNorm(y))
+        output = y + self.ffn(self.ln2(y))
+
+        return output
