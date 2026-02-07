@@ -4,7 +4,8 @@ import os
 from collections.abc import Iterable
 from typing import IO, Any, BinaryIO
 from cs336_basics.bpe_tokenizer import train_bpe_parallel, Tokenizer
-from cs336_basics.transformer import Linear, Embedding, RMSNorm, SwiGLU, RoPE, SiLU, Softmax, TransformerBlock
+from cs336_basics.transformer import Linear, Embedding, RMSNorm, SwiGLU, RoPE, SiLU, Softmax, TransformerBlock, Transformer
+from cs336_basics.train import AdamW, CrossEntropyLoss, Perplexity, get_batch, gradient_clipping, get_lr_cosine_schedule, save_checkpoint, load_checkpoint
 import numpy.typing as npt
 import torch
 from jaxtyping import Bool, Float, Int
@@ -56,6 +57,16 @@ def run_embedding(
     embedding = Embedding(vocab_size, d_model)
     embedding.weight.data = weights
     return embedding(token_ids)
+
+def run_cross_entropy(
+    logits: Float[Tensor, " ... vocab_size"],
+    targets: Int[Tensor, " ..."],
+) -> Float[Tensor, ""]:
+    """
+    Given a tensor of logits and targets, compute the average cross-entropy loss across examples.
+    """
+    cross_entropy = CrossEntropyLoss()
+    return cross_entropy(logits, targets)
 
 
 def run_swiglu(
@@ -403,7 +414,21 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    transformer = Transformer(
+        vocab_size=vocab_size,
+        context_length=context_length,
+        d_model=d_model,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        rope_theta=rope_theta,
+    )
+    
+    # Load state dict
+    transformer.load_state_dict(weights)
+    
+    # Run forward pass
+    return transformer(in_indices)
 
 
 def run_rmsnorm(
@@ -466,7 +491,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return get_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -486,24 +511,6 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
     return softmax(in_features)
 
 
-def run_cross_entropy(
-    inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]
-) -> Float[Tensor, ""]:
-    """Given a tensor of inputs and targets, compute the average cross-entropy
-    loss across examples.
-
-    Args:
-        inputs (Float[Tensor, "batch_size vocab_size"]): inputs[i][j] is the
-            unnormalized logit of jth class for the ith example.
-        targets (Int[Tensor, "batch_size"]): Tensor of shape (batch_size,) with the index of the correct class.
-            Each value must be between 0 and `num_classes - 1`.
-
-    Returns:
-        Float[Tensor, ""]: The average cross-entropy loss across examples.
-    """
-    raise NotImplementedError
-
-
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
     """Given a set of parameters, clip their combined gradients to have l2 norm at most max_l2_norm.
 
@@ -513,14 +520,14 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    gradient_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -548,7 +555,7 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    return get_lr_cosine_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
 
 
 def run_save_checkpoint(
@@ -567,7 +574,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    return save_checkpoint(model, optimizer, iteration, out)
 
 
 def run_load_checkpoint(
@@ -588,8 +595,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
-
+    return load_checkpoint(src, model, optimizer)
 
 def get_tokenizer(
     vocab: dict[int, bytes],

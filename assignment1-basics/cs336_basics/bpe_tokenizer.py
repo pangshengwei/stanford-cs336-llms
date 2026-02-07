@@ -38,6 +38,7 @@ class Tokenizer():
         else:
             self.special_token_pattern = None
 
+    @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None) -> 'Tokenizer':
         """
         constructs and return a Tokenizer from a serialized vocabulary and list of merges
@@ -51,9 +52,25 @@ class Tokenizer():
             Tokenizer: A new Tokenizer object
         """
         with open(vocab_filepath, 'r', encoding='utf-8') as f:
-            vocab = json.load(f)
+            vocab_raw = json.load(f)
+        
+        # Convert vocab: string keys -> int keys, hex strings -> bytes
+        vocab = {}
+        for k, v in vocab_raw.items():
+            token_id = int(k)
+            token_bytes = bytes.fromhex(v)
+            vocab[token_id] = token_bytes
+        
         with open(merges_filepath, 'r', encoding='utf-8') as f:
-            merges = [tuple(line.strip().split()) for line in f]
+            merges_raw = [line.strip().split() for line in f if line.strip()]
+        
+        # Convert merges: hex strings -> bytes
+        merges = []
+        for merge in merges_raw:
+            if len(merge) == 2:
+                pair = (bytes.fromhex(merge[0]), bytes.fromhex(merge[1]))
+                merges.append(pair)
+        
         return cls(vocab, merges, special_tokens)
 
     def encode(self, text: str) -> list[int]:

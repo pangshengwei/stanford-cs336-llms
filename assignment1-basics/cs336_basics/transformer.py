@@ -414,3 +414,90 @@ class TransformerBlock(nn.Module):
         output = y + self.ffn(self.ln2(y))
 
         return output
+
+class Transformer(nn.Module):
+    """
+    Transformer Language Model.
+    
+    A decoder-only transformer that predicts next tokens given a sequence of input tokens.
+    Uses RoPE for positional encoding and SwiGLU for feed-forward layers.
+    """
+    
+    def __init__(
+        self,
+        vocab_size: int,
+        context_length: int,
+        d_model: int,
+        num_layers: int,
+        num_heads: int,
+        d_ff: int,
+        rope_theta: float = 10000.0,
+        device=None,
+        dtype=None
+    ):
+        """
+        Initialize Transformer language model.
+        
+        Args:
+            vocab_size: Size of the vocabulary
+            context_length: Maximum sequence length the model can handle
+            d_model: Dimensionality of the model embeddings
+            num_layers: Number of transformer blocks
+            num_heads: Number of attention heads in each block
+            d_ff: Dimensionality of feed-forward inner layer
+            rope_theta: Base value for RoPE frequency calculation
+            device: Device to place parameters on
+            dtype: Data type for parameters
+        """
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.context_length = context_length
+        self.d_model = d_model
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.rope_theta = rope_theta
+        self.device = device
+        self.dtype = dtype
+
+        # Token embedding layer
+        self.token_embeddings = Embedding(vocab_size, d_model, device=device, dtype=dtype)
+
+        # Transformer blocks
+        self.layers = nn.ModuleList([
+            TransformerBlock(
+                d_model=d_model,
+                num_heads=num_heads,
+                d_ff=d_ff,
+                theta=rope_theta,
+                max_seq_len=context_length,
+                device=device,
+                dtype=dtype
+            )
+            for _ in range(num_layers)
+        ])
+
+        # Final RMSNorm and output projection
+        self.ln_final = RMSNorm(d_model, device=device, dtype=dtype)
+        self.lm_head = Linear(d_model, vocab_size, device=device, dtype=dtype)
+        
+    def forward(
+        self,
+        in_indices: torch.Tensor,
+        token_positions: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        batch_size, seq_len = in_indices.shape
+        assert seq_len <= self.context_length, "Sequence length must be less than or equal to context length"
+
+        # Step 1: Embed input indices
+        x = self.token_embeddings(in_indices)
+        
+        # Step 2: Forward pass through Transformer blocks
+        for layer in self.layers:
+            x = layer(x, token_positions=token_positions)
+        
+        # Step 3: Apply final RMSNorm and output projection
+        x = self.ln_final(x)
+        output = self.lm_head(x)
+        
+        return output
