@@ -1,0 +1,14 @@
+[
+  {
+    "model_size": "small",
+    "completed": true
+  },
+  {
+    "model_size": "medium",
+    "completed": true
+  },
+  {
+    "model_size": "large",
+    "completed": true
+  }
+]
