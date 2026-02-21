@@ -106,7 +106,8 @@ def main(cfg: Config) -> None:
                 * cfg.model.context_length
             )
         )
-        if cfg.training.wandb_project and cfg.training.wandb_entity:
+        use_wandb = bool(cfg.training.wandb_project and cfg.training.wandb_entity)
+        if use_wandb:
             wandb.init(
                 # Set the project where this run will be logged
                 entity=cfg.training.wandb_entity,
@@ -114,6 +115,8 @@ def main(cfg: Config) -> None:
                 config=OmegaConf.to_container(cfg, resolve=True),
                 name=cfg.paths.model_output.name,
             )
+    else:
+        use_wandb = False
 
     # Seed each process differently so we can be sure that they
     # see different data batches.
@@ -138,7 +141,11 @@ def main(cfg: Config) -> None:
     if is_master_process:
         logger.info(f"Using dtype: {torch_dtype}")
 
-    amp_ctx = torch.amp.autocast(device_type="cuda", dtype=torch_dtype)
+    # Determine the device type for autocast (autocast needs "cuda" or "mps", not "cuda:0" etc.)
+    _device_type = cfg.training.device.split(":")[0] if ":" in cfg.training.device else cfg.training.device
+    if _device_type not in ("cuda", "mps", "cpu"):
+        _device_type = "cpu"
+    amp_ctx = torch.amp.autocast(device_type=_device_type, dtype=torch_dtype)
 
     # Move model to the device
     model = model.to(cfg.training.device)
@@ -162,13 +169,14 @@ def main(cfg: Config) -> None:
         {"params": params_to_decay, "weight_decay": cfg.training.weight_decay},
         {"params": params_to_not_decay, "weight_decay": 0.0},
     ]
-    # Create AdamW optimizer and use the fused version if it is available
+    # Create AdamW optimizer; fused kernel is only available on CUDA
+    use_fused = torch.cuda.is_available()
     optimizer = torch.optim.AdamW(
         optim_groups,
         lr=cfg.training.lr,
         betas=(cfg.training.adam_beta1, cfg.training.adam_beta2),
         eps=cfg.training.adam_eps,
-        fused=True,
+        fused=use_fused,
     )
 
     # Get the first batch
@@ -226,7 +234,7 @@ def main(cfg: Config) -> None:
 
         if is_master_process:
             pbar.set_description(f"Training step {i}, Loss: {loss_float:.4f}")
-            if cfg.training.wandb_project and i % cfg.training.log_interval == 0:
+            if use_wandb and i % cfg.training.log_interval == 0:
                 wandb.log({"train_loss": loss_float, "lr": lr}, step=i)
 
         if i != 0 and i % cfg.training.eval_interval == 0 and is_master_process:
@@ -239,7 +247,7 @@ def main(cfg: Config) -> None:
                 context_length=cfg.model.context_length,
             )
             logger.info(f"Estimated validation loss: {dev_loss}")
-            if cfg.training.wandb_project:
+            if use_wandb:
                 wandb.log({"eval_loss": dev_loss}, step=i)
 
             if cfg.training.save_checkpoints:
@@ -265,7 +273,7 @@ def main(cfg: Config) -> None:
             context_length=cfg.model.context_length,
         )
         logger.info(f"Final estimated validation loss: {dev_loss}")
-        if cfg.training.wandb_project:
+        if use_wandb:
             wandb.log({"eval_loss": dev_loss}, step=cfg.training.train_steps)
 
         # Save the model weights

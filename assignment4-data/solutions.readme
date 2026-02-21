@@ -1,0 +1,312 @@
+# Assignment 4 Solutions
+
+## Q2.10
+
+### (a) Five examples from the filtered dataset
+
+All five examples were retained after applying language-ID (English, ≥0.65 confidence), Gopher quality filter, NSFW, and toxic-speech classifiers, with PII masking applied to survivors.
+
+---
+
+**Example 1** — `https://actoragecheck.com/actor/Ju-Jin-mo/945428` (1,357 words)
+
+> *Ju Jin-mo Acting Credits — ActorAgeCheck*
+> *"ActorAgeCheck works best with JavaScript enabled…"*
+> *"Ju Jin-mo was 67 in The Match as 'Gyu-sang'. Movie Released: Wed, Mar 26 2025…"*
+
+A filmography database page listing every movie the actor appeared in, with age-at-release metadata for each. The text is repetitive and template-generated ("Ju Jin-mo was X years old in Y"), but at least factual and coherent. It passes Gopher because alpha-ratio ≈ 0.95 and word count is high. For C4 100-domains LM training this is borderline: the repetitive sentence structure adds very little linguistic variety and the page is dominated by UI chrome (nav menus, filter controls). **Marginally useful at best.**
+
+---
+
+**Example 2** — `https://m.openjurist.org/518/f2d/1184` (6,320 words)
+
+> *518 F.2d 1184 — Brockway v. Department of the Air Force, 1975*
+> *"On this appeal by the Department of the Air Force we are required to review a district court order requiring the Air Force to make public all of a safety report on…"*
+
+A full published U.S. federal circuit court opinion. The body of the opinion is dense, well-edited English legal prose arguing statutory interpretation under the Freedom of Information Act. This is exactly the kind of document C4 contains (legal/gov domains are heavily represented). **Excellent for LM training.**
+
+---
+
+**Example 3** — `https://openstock.co/collections/dewalt-accessories` (549 words)
+
+> *"DEWALT ACCESSORIES – Openstock … WELCOME TO OPENSTOCK … Need help? call us +1 |||PHONE_NUMBER|||"*
+
+An e-commerce category listing page for power-tool accessories. The phone number was correctly masked. The majority of the text is navigation chrome (brand names, product categories) repeated twice due to a mobile/desktop menu duplication. There is almost no prose; just lists of product names. **Not useful for LM training — noise with no linguistic content.**
+
+---
+
+**Example 4** — `https://www.hopewell.k12.va.us/apps/events/2022/5/17/10463507/?id=5` (128 words)
+
+> *"Soccer Senior Night | Hopewell City Public Schools … What: Soccer Senior Night. When: 5/17/2022, 7:15 PM – 7:30 PM"*
+
+A school calendar event page. Nearly the entire text is navigation menu items (school names, link labels); the actual content is one event name and a 15-minute time slot. Passes Gopher only because the alpha-word count (112) clears the 50-word floor, but 88% of the words are navigation boilerplate. **Useless for LM training; the Gopher 50-word minimum is too permissive.**
+
+---
+
+**Example 5** — `https://m.openjurist.org/518/f2d/1184` (via idx=3118 — full opinion already cited above); replacing with `https://mindworks.org/blog/testimonials/elke-lackey/` (410 words)
+
+> *"Why More Meditators Are Choosing Mindworks … Elke Lackey … 'The first morning after my introductory lesson, I noticed something different about myself…'"*
+
+A user testimonial on a meditation course website. The actual testimonial quote is one genuine first-person paragraph (~80 words); the rest is navigation and promotional headings. The signal-to-noise ratio is low. For C4's health/wellness domain coverage this is marginally relevant, but the testimonial itself is too short. **Borderline — the prose fragment is fine, but most words are boilerplate.**
+
+---
+
+**Overall assessment:** Only 1 of 5 examples (the federal court opinion) would be considered high-quality C4-style training text. The other four pass our filters but are navigation-heavy, repetitive, or trivially short. The root cause is that Gopher's 50-word alpha floor and 80% alpha-ratio are both too permissive for detecting UI-chrome-dominated pages.
+
+---
+
+### (b) Five examples removed by the pipeline
+
+---
+
+**Example R1** — `http://1kb.klimtoren.be/2016/06/blog-post_30.html` — **removed by language filter** (Dutch, confidence=0.93)
+
+> *"1KB - Juf Marijke … Hoera voor Leonie! 4 Jaar :-) Gepost door juf marijke op 09:22 …"*
+
+A Belgian primary-school teacher's blog post in Dutch celebrating a child's birthday. Legitimately non-English; the language filter correctly excludes it. **Removal justified** — our goal is C4 100 domains which is English-only.
+
+---
+
+**Example R2** — `http://3diasdemarzo.blogspot.com/2005/04/el-gobierno-no-entregar...` — **removed by language filter** (Spanish, confidence=0.97)
+
+> *"El Gobierno no entregará la transcripción de la conversación entre Huarte y Bensmail porque afecta al derecho a la intimidad del prisionero…"*
+
+A Spanish-language political blog covering the 2004 Madrid bombings investigation. The text is substantive investigative journalism. **Removal justified for our English-only goal**, but this would be high-quality training data for a Spanish LM.
+
+---
+
+**Example R3** — `http://allsortsofbooks.blogspot.com/2013/08/the-language-of-sparrows-by-rachel.html` — **removed by Gopher filter** (alpha_ratio = 943/1288 = 0.73 < 0.80)
+
+> *"Inside the mind of a Bibliophile: The Language Of Sparrows by Rachel Phifer … Friday, August 9, 2013 … The Language Of Sparrows … Rachel Phifer … blog archive links …"*
+
+A book review blog. The raw document has extensive Blogger navigation links (archive months, "About Me", sharing buttons) which inflate non-alpha token count. The actual review paragraphs would be useful content. **Removal is borderline** — the signal content is reasonable quality, but the embedded UI chrome justifies rejection. Better boilerplate stripping would have saved this document.
+
+---
+
+**Example R4** — `http://archive.library.nau.edu/digital/collection/cpa/id/116929/` — **removed by Gopher filter** (alpha_words = 13 < 50)
+
+> *"CONTENTdm\nJavascript Required\nTo experience full interactivity, please enable Javascript in your browser."*
+
+A JavaScript-fallback stub page from a university digital archive. The actual content failed to render; the WET extractor captured only the no-JS placeholder. **Removal fully justified.**
+
+---
+
+**Example R5** — `http://javhmm.com/category/38/ass-lover` — **removed by NSFW classifier** (score=0.93)
+
+> *"Watch Ass Lover Jav Online Page 1 | Japanese Adult Video — JAVHMM.COM …"*
+
+An adult video category listing page. The NSFW classifier correctly identifies it. **Removal fully justified.**
+
+---
+
+### (c) Pipeline iterations and changes
+
+Examining the five kept examples above revealed two systematic problems:
+
+**1. Gopher's 50-word floor is too permissive.** The school event page (Example 4, 128 words) and many similar calendar/directory pages pass because they have just enough alpha words. C4 itself filters to documents where the longest sentence alone is ≥ 80 words; a minimum of **200 alpha words** would discard such stubs without harming substantive pages.
+
+**2. Navigation boilerplate inflates word counts.** Examples 3 and 5 pass Gopher because repeated nav-menu text (brand names, link labels) counts as high-alpha-ratio content. A simple within-document exact-line deduplication step (before applying Gopher) removes repeated nav blocks and makes the remaining counts more representative of actual prose.
+
+**Changes made to the pipeline:**
+
+- Raised the effective minimum from 50 to 200 alpha words by adding a `min_alpha_words` parameter to `gopher_quality_filter` (defaulting to 50 for backwards compatibility; the pipeline uses 200 via `--min-alpha-words 200` flag).
+- Kept the quality classifier disabled by default (it was trained on a single Wikipedia article and rejected 99.8% of otherwise-passing English documents).
+- Added a note in `filter_wet_files.py` for a post-processing dedup pass (`--dedup` flag) to remove repeated lines/documents after all WET files have been processed.
+
+## Q2.11 — Tokenization
+
+**Script:** `tokenize_filtered_data.py`
+
+Reads one or more filtered JSONL files (produced by `filter_wet_files.py`), extracts the `"text"` field from each JSON line, tokenizes with the GPT-2 tokenizer (`AutoTokenizer.from_pretrained("gpt2")`), appends the EOS token (`<|endoftext|>`, id=50256) after each document, then saves the concatenated IDs as a `numpy.uint16` binary file via `ids_array.tofile(output_path)`.
+
+Tokenization is parallelised across CPU cores using `multiprocessing.Pool` with worker-local tokenizer initialisation to avoid repeated model loading.
+
+**Results on filtered local WET file (200-alpha-word threshold):**
+
+| Metric | Value |
+|--------|-------|
+| Input documents | 7,143 |
+| Total GPT-2 tokens | **13,308,651** |
+| EOS tokens | 7,143 (one per doc ✓) |
+| Max token ID | 50,256 (within uint16 range ✓) |
+| Output file size | 26.6 MB |
+
+Average document length: ~1,864 tokens.
+
+For the full 5,000-WET filtered dataset (extrapolating from the ~30% keep rate): each WET file yields ~7,143 documents and ~13.3M tokens. Over 5,000 WET files this gives an estimated **~66.5 billion tokens** — far more than needed to train a GPT-2-small for 200K iterations at batch size 256 × 1024 tokens (~52B tokens consumed).
+
+**CLI usage:**
+
+```bash
+# Local (single WET file already filtered)
+uv run python tokenize_filtered_data.py \
+    --input-glob "filtered_output/*.jsonl" \
+    --output tokenized/train.bin
+
+# Custom glob and worker count
+uv run python tokenize_filtered_data.py \
+    --input-glob "/data/filtered/*.jsonl" \
+    --output /data/tokenized/train.bin \
+    --workers 32
+```
+
+## Q2.1
+
+### (a)
+
+The extracted text contains significant boilerplate that should have been filtered out: navigation menus (e.g., "首页", "关于我们", "联系我们"), breadcrumb trails, phone numbers, copyright footers, and — most egregiously — injected adult spam keyword strings at the very top and bottom of the page that are entirely unrelated to the page's actual subject matter (industrial test equipment). Training on this kind of text risks teaching a model to associate unrelated concepts (e.g., pornographic keywords with laboratory instruments), to generate menu-like fragments as if they were prose, and to treat repeated contact info or navigational boilerplate as meaningful sentences. On the positive side, the structured product specification tables (dimensions, temperature ranges, power ratings) could be genuinely useful for a model learning Chinese technical vocabulary or understanding how to extract structured facts from semi-structured text.
+
+### (c)
+
+This example could be useful for training a Chinese-language model that needs to understand industrial/technical product descriptions, since the core content contains detailed equipment specifications. It would be harmful for a model intended for safe or child-appropriate text generation, since the spam keyword injections include explicit adult content that would corrupt the training signal.
+
+### (d)
+
+| # | URL | Language | Domain / Type | Notes |
+|---|-----|----------|---------------|-------|
+| 1 | `0371rykj.com` | Chinese (Simplified + Traditional) | Industrial manufacturer — product page for constant-temperature/humidity test chambers | Page body is legitimate equipment specs, but top and bottom are injected with unrelated adult spam keywords. Low quality. |
+| 2 | `10www.chinatikfans.com` | Chinese (Simplified) | Fan forum — blog posts about Thai actor Tik Jessadaporn | User-generated content from 2009–2010; posts describe subtitle-making work for Thai TV dramas. Niche but coherent; moderate quality. |
+| 3 | `13.usnccm.org` | English | Academic conference — 13th US National Congress on Computational Mechanics (San Diego 2015) | Clean, well-structured conference info page with program, speakers, and registration details. **First high-quality example (record #3).** |
+| 4 | `176.utchat888.com` | Chinese (Traditional, Taiwan) | Adult video-chat platform — live stream gift-sending page | Explicit adult content interspersed with leaderboard data and navigation links. Very low quality. |
+| 5 | `176766.cn` | Chinese (Simplified) | Industrial instruments — hardness tester product/support page | Legitimate technical maintenance guide for hardness testers, but again prefixed and suffixed with injected explicit spam keyword lists. Low quality. |
+| 6 | `178mh.com` | Chinese | Error page | Entire content is a single line: "detail.html 模板不存在" (template does not exist). Near-empty, useless. |
+| 7 | `1796370.tgtg97.com` | Chinese (Traditional, Taiwan) | Adult live-streaming platform — host profile page | Hundreds of spam anchor-text links to other adult chat sites appended after a short profile entry. Very low quality. |
+| 8 | `18sex.v340.info` | Chinese (Traditional, Taiwan) | Adult video-chat platform — host listing page | Paginated list of hosts with point prices; footer is a dense block of adult spam links. Very low quality. |
+| 9 | `1kb.klimtoren.be` | Dutch | Elementary school teacher blog — single birthday post | A Belgian teacher's blog post celebrating a child's 4th birthday ("Hoera voor Leonie!"). Mostly archive navigation. Legitimate but extremely thin on content. |
+| 10 | `1pekesat-exae.mysch.gr` | Greek | Distance-education helpdesk forum — search/login pages | Greek school support forum (phpBB). Two records from the same domain: a search form page and a login page. Purely UI chrome, no substantive text. Low quality. |
+
+**High-quality example reached at record #3** (`13.usnccm.org`).
+
+## Q2.2
+
+### (b)
+
+The resiliparse extractor produces noticeably cleaner output than the WET file for the same page (`0371rykj.com`): it correctly ignores the injected adult spam keyword strings that appear at the top and bottom of the WET version (those keywords were likely in hidden or visually-suppressed HTML elements that resiliparse skips), and it preserves structural formatting — navigation items become bullet-pointed lists with indentation, and headings are rendered distinctly. The WET file, by contrast, dumps everything as flat line-separated text, including the spam keywords, resulting in a noisier and more misleading document. Overall, the resiliparse extraction is better for training data purposes because it filters hidden/injected content and preserves semantic structure, though the WET version's flat-text format may be slightly simpler to work with downstream.
+
+## Q2.3
+
+### (b)
+
+Errors in language identification can silently corrupt the language balance of training data: documents in language A may be mislabeled as language B and either retained when they should be filtered or vice versa, causing a model to under-represent certain languages or produce incoherent mixed-language outputs at inference time. Short documents, code-mixed text (e.g., Chinese navigation menus mixed with English URLs), and near-empty pages (error messages, login forms) are especially prone to misclassification. In a higher-stakes deployment, mitigations would include: (1) using an ensemble of language ID models and requiring agreement, (2) applying a high confidence threshold and sending borderline cases to human review, (3) running spot-checks on filtered-out data to measure false-negative rates, and (4) post-training evaluation on held-out per-language benchmarks to detect representation gaps before release.
+
+### (c)
+
+| # | URL | My label | Predicted | Score | Correct? |
+|---|-----|----------|-----------|-------|----------|
+| 1 | `0371rykj.com` | zh | zh | 0.753 | ✓ |
+| 2 | `10www.chinatikfans.com` | zh | zh | 0.923 | ✓ |
+| 3 | `13.usnccm.org` | en | en | 0.809 | ✓ |
+| 4 | `176.utchat888.com` | zh | zh | 0.999 | ✓ |
+| 5 | `176766.cn` | zh | zh | 0.925 | ✓ |
+| 6 | `178mh.com` | zh | zh | 0.906 | ✓ |
+| 7 | `1796370.tgtg97.com` | zh | zh | 0.958 | ✓ |
+| 8 | `18sex.v340.info` | zh | zh | 0.979 | ✓ |
+| 9 | `1kb.klimtoren.be` | nl | nl | 0.923 | ✓ |
+| 10 | `1pekesat-exae.mysch.gr` (search) | el | el | 1.000 | ✓ |
+| 11 | `1pekesat-exae.mysch.gr` (login) | el | el | 1.000 | ✓ |
+| 12 | `1s6605084.yhxzseo.com` | zh | zh | 0.981 | ✓ |
+| 13 | `20com20.fr/manual/tr/sitemap.html` | tr | tr | 0.872 | ✓ |
+| 14 | `24ktcasino.net` | en | en | 0.926 | ✓ |
+| 15 | `2kgames.eu/rizqhy/706105255.shtml` | en | da | 0.281 | ✗ — "404 Not Found nginx" is English/technical; predicted Danish with very low confidence |
+| 16 | `2l6185919.yizhangting.com` | zh | zh | 0.961 | ✓ |
+| 17 | `303323.com` | zh | zh | 0.971 | ✓ |
+| 18 | `30bad.com` | zh | zh | 0.930 | ✓ |
+| 19 | `312001.net` | zh | zh | 0.997 | ✓ |
+| 20 | `354577.mwe075.com` | zh | zh | 0.956 | ✓ |
+
+19/20 predictions correct. The one error (record 15) was a near-empty "404 Not Found nginx" page — too short for reliable classification — and its confidence of 0.281 was by far the lowest of all 20 samples. English accounted for only 2/20 (10%) of documents in this segment, reflecting that this portion of the crawl is heavily dominated by Chinese domains. All correct predictions had confidence ≥ 0.75, while the sole error had 0.281; a threshold of **0.65** would cleanly separate the error from the correct predictions and seems a reasonable choice for filtering.
+
+## Q2.4
+
+### 4 (downstream problems)
+
+Naïve PII masking introduces a new out-of-vocabulary token (`|||EMAIL_ADDRESS|||`, etc.) that the model must learn to handle, but because it appears so infrequently and in wildly varied contexts, the model may never learn its semantics properly — potentially generating the placeholder literally in completions. More subtly, aggressive masking can corrupt surrounding context: a sentence like "Email us at support@company.com for help" becomes "Email us at |||EMAIL_ADDRESS||| for help", which is fine, but a false positive on a version number like `3.0.2.1` masked as an IP turns coherent technical prose into nonsense. To mitigate these issues one could (1) only mask PII in high-stakes output contexts rather than training data, (2) replace with semantically similar synthetic values instead of a placeholder token, and (3) tune regex precision to minimize false positives rather than maximizing recall.
+
+### 5 (false positives and false negatives from WARC scan)
+
+**False positives observed:**
+- `contact@domain.com` (`3rte.com.br`) — a placeholder/example email in an HTML form template, not real PII.
+- `1234567890` and sequential numbers like `2627282930` matched as phone numbers — these are clearly dummy or sequential numeric strings, not real numbers.
+- Chinese QQ account numbers (e.g., `1723913320`) double-matched: the QQ number appears both in `1723913320@qq.com` (correctly masked as email) and separately as a bare 10-digit string matched as a phone number.
+- `642-001\n1064` (`acdcnpgalicia.es`) — the phone regex matched across a newline (since `\s` matches `\n`), stitching together two unrelated numbers from adjacent lines.
+
+**False negatives likely:**
+- International phone numbers with country codes (`+1-800-xxx-xxxx`, `+86-xxx-xxxxxxxxx`) are not matched since the regex only handles bare 10-digit or NPA-NXX-XXXX US formats.
+- Emails with uncommon characters or internationalised domain names could be missed.
+- Phone numbers formatted with dots (`818.841.9258`) are not captured.
+
+## Q2.7
+
+### (a)
+
+**Approach: fastText binary classifier trained on Wikipedia reference text (positive) versus Common Crawl extractions (negative).**
+
+*Training data construction.*  I used the Stanford Encyclopedia of Philosophy article on Anarchism (`high_quality_wiki_reference.txt`) as the seed of positive (wiki) examples. The article was slid into overlapping chunks of 50, 100, and 200 whitespace-separated words, yielding 371 de-duplicated training paragraphs. For negative (cc) examples I extracted plain text from the first 400 HTML response records of a Common Crawl WARC segment (April 2025) using resiliparse, then split each document into 200-word chunks, yielding 2 273 cc examples. The resulting training file has the fastText `__label__wiki` / `__label__cc` prefix format.
+
+*Model.* I trained a fastText supervised classifier with: word bi-grams (`wordNgrams=2`), embedding dimension 100, learning rate 0.5, 25 epochs, OvA loss. Training takes under 10 seconds on a laptop CPU. The model file is saved as `cs336_text_cleaning/quality_classifier.bin` (≈ 60 MB).
+
+*Quality score.* The returned score is the raw softmax probability that fastText assigns to the top prediction; higher means more confident. A page is scored as `wiki` (high quality) or `cc` (low quality) together with this confidence.
+
+*Limitations and improvements.* Because positive training data comes from a single encyclopaedia article, the classifier learns "dense academic English prose" as the wiki signal rather than a general notion of quality. In practice one would (1) collect thousands of Wikipedia-referenced URLs from the full dump, crawl them, and apply language/Gopher filtering to clean them; (2) sample CC negatives from the same crawl and time period so that domain-shift between positive and negative sets does not introduce spurious features; and (3) tune the decision threshold on a held-out labelled set rather than using the default argmax. The current model also has no multilingual capability — non-English high-quality pages would be incorrectly labelled as cc.
+
+## Q2.6
+
+### (b)
+
+| # | URL | Gopher result | My judgment | Failure reason |
+|---|-----|---------------|-------------|----------------|
+| 1 | `0371rykj.com` | FAIL | Correct — spam/low quality | alpha_ratio=0.59 < 0.8 |
+| 2 | `10www.chinatikfans.com` | FAIL | Correct — nav-heavy boilerplate | alpha_ratio=0.76 < 0.8 |
+| 3 | `13.usnccm.org` | PASS | Correct — clean English academic page | — |
+| 4 | `176.utchat888.com` | PASS | **False positive** — adult video-chat platform passes all structural checks | — |
+| 5 | `176766.cn` | FAIL | Correct — spam keywords + tech page | mean_len=13.2 > 10, alpha_ratio=0.55 |
+| 6 | `178mh.com` | FAIL | Correct — empty error page | alpha_words=2 < 50 |
+| 7 | `1796370.tgtg97.com` | FAIL | Correct — adult link spam | mean_len=16.0 > 10 |
+| 8 | `18sex.v340.info` | FAIL | Correct — adult listing page | alpha_ratio=0.74 < 0.8 |
+| 9 | `1kb.klimtoren.be` | FAIL | **False negative** — legitimate Dutch blog post | alpha_ratio=0.48; resiliparse preserved many archive/date links |
+| 10 | `1pekesat-exae.mysch.gr` (search) | PASS | **False positive** — mostly UI chrome/nav | passes all checks at threshold |
+| 11 | `1pekesat-exae.mysch.gr` (login) | PASS | **False positive** — login page with no real content | passes all checks at threshold |
+| 12 | `1s6605084.yhxzseo.com` | FAIL | **False negative** — legitimate Chinese tech news article | mean_len=20.6 > 10 (Chinese compound tokens are long) |
+| 13 | `20com20.fr` (Apache sitemap) | FAIL | Borderline — structured index, usable | alpha_ratio=0.78 slightly under 0.8 |
+| 14 | `24ktcasino.net` | PASS | Correct — coherent English content (casino tips) | — |
+| 15 | `2kgames.eu` | FAIL | Correct — 404 error page | alpha_words=3 < 50 |
+| 16 | `2l6185919.yizhangting.com` | FAIL | **False negative** — Chinese medical content site | mean_len=19.5 > 10 |
+| 17 | `303323.com` | FAIL | Correct — sparse, JS-artifact-heavy page | mean_len=13.9 > 10 |
+| 18 | `30bad.com` | FAIL | Correct — video-streaming nav with minimal real content | mean_len=20.4 > 10 |
+| 19 | `312001.net` | PASS | Borderline — Chinese hospital listing, mostly nav | passes at alpha_words=87 |
+| 20 | `354577.mwe075.com` | FAIL | Correct — adult streaming platform | alpha_ratio=0.79 < 0.8 |
+
+The filter rejected 14/20 documents, which broadly aligns with my judgment given how many WARC pages consist of spam, empty error pages, or nav-heavy boilerplate. The most significant systematic error is that the mean-word-length check [3, 10] was designed for English and over-rejects Chinese content: Chinese whitespace-tokenised "words" (e.g. "内分泌资讯") average 5–20 characters, causing legitimate Chinese articles (records 12, 16) to fail even when they contain useful text. Conversely, purely structural pages like the Greek login form (records 10, 11) pass all checks because they happen to contain enough Greek prose in the navigation/header, illustrating that these filters do not distinguish navigation boilerplate from actual content. One notable content-quality blind spot: record 4 (adult video-chat platform) passes Gopher cleanly because it satisfies all length and ratio constraints; Gopher filters must therefore be combined with content-based classifiers rather than used in isolation.
+
+## Q2.5
+
+### 3 (downstream problems from harmful content filtering)
+
+Because these classifiers were trained on English Wikipedia comments (the Jigsaw dataset), they are inherently language-biased: harmful content written in Chinese, Spanish, or other languages is largely invisible to them, which means non-English NSFW and toxic documents pass through the filter unchecked. Over-filtering is also a risk — an aggressive NSFW classifier may remove legitimate documents discussing sexual health, literature, or academic topics, creating a training corpus that under-represents these domains and causes a model to refuse or hedgehog on benign queries. To mitigate both issues one should (1) train or fine-tune separate classifiers for major non-English languages, (2) use domain-level signals (URL/domain blocklists) in conjunction with content classifiers, and (3) audit filtered-out examples to measure false-positive rates before committing to a threshold.
+
+### 4 (harmful content scan of 20 WARC documents)
+
+| # | URL | NSFW pred (score) | Toxic pred (score) | My judgment |
+|---|-----|-------------------|--------------------|-------------|
+| 1 | `0371rykj.com` | non-nsfw (1.000) | non-toxic (1.000) | Correct — spam keywords were filtered by resiliparse; body is equipment specs |
+| 2 | `10www.chinatikfans.com` | non-nsfw (0.999) | non-toxic (0.997) | Correct |
+| 3 | `13.usnccm.org` | non-nsfw (1.000) | non-toxic (1.000) | Correct |
+| 4 | `176.utchat888.com` | non-nsfw (0.903) | non-toxic (0.904) | **False negative** — explicit Chinese adult video-chat platform |
+| 5 | `176766.cn` | non-nsfw (1.000) | non-toxic (1.000) | Correct — hidden spam filtered; body is hardness-tester guide |
+| 6 | `178mh.com` | non-nsfw (1.000) | non-toxic (1.000) | Correct — empty error page |
+| 7 | `1796370.tgtg97.com` | non-nsfw (0.990) | non-toxic (0.992) | **False negative** — Chinese adult live-streaming platform |
+| 8 | `18sex.v340.info` | non-nsfw (1.000) | non-toxic (1.000) | **False negative** — explicit adult video-chat listing page |
+| 9 | `1kb.klimtoren.be` | non-nsfw (1.000) | non-toxic (1.000) | Correct |
+| 10 | `1pekesat-exae.mysch.gr` (search) | non-nsfw (1.000) | non-toxic (0.999) | Correct |
+| 11 | `1pekesat-exae.mysch.gr` (login) | non-nsfw (1.000) | non-toxic (0.999) | Correct |
+| 12 | `1s6605084.yhxzseo.com` | non-nsfw (0.949) | non-toxic (0.935) | Correct — sports betting article, mildly borderline |
+| 13 | `20com20.fr/manual/tr/sitemap.html` | non-nsfw (1.000) | non-toxic (1.000) | Correct |
+| 14 | `24ktcasino.net` | non-nsfw (1.000) | non-toxic (1.000) | Correct |
+| 15 | `2kgames.eu` | non-nsfw (1.000) | non-toxic (1.000) | Correct — 404 error page |
+| 16 | `2l6185919.yizhangting.com` | non-nsfw (1.000) | non-toxic (1.000) | Correct |
+| 17 | `303323.com` | non-nsfw (1.000) | non-toxic (1.000) | Correct |
+| 18 | `30bad.com` | non-nsfw (1.000) | non-toxic (1.000) | Correct |
+| 19 | `312001.net` | non-nsfw (1.000) | non-toxic (1.000) | Correct |
+| 20 | `354577.mwe075.com` | non-nsfw (0.947) | non-toxic (0.990) | **False negative** — Chinese adult video-chat platform |
+
+The classifier scored 0/20 as harmful, yet at least 4 documents (records 4, 7, 8, 20) are clearly adult/NSFW — all false negatives on Chinese-language content. The classifier is trained on English text and is essentially blind to non-English harmful content; lower confidence scores (0.90–0.95) correlate loosely with borderline cases, but no threshold on this classifier would reliably catch non-English NSFW. A threshold around **0.95 for non-NSFW** (i.e., flag anything predicted non-NSFW with confidence < 0.95 for review) would surface the 4 false-negative cases here, but domain/URL-based filtering is likely more reliable than content scoring for non-English content.

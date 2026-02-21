@@ -1,14 +1,34 @@
 # @package _global_
+#
+# Experiment config for local MacBook Pro (MPS) training.
+# Usage (from cs336-basics/ directory):
+#   uv run python scripts/train.py \
+#     paths.train_bin=<path>/tokenized/train_split.bin \
+#     paths.valid_bin=<path>/tokenized/val.bin \
+#     paths.model_output=output/your_data \
+#     training.device=mps training.compile=false training.train_batch_size=32 \
+#     training.dtype=bfloat16 training.wandb_project=cs336-data
+#
+# On the cluster (2 GPUs):
+#   uv run torchrun --standalone --nproc_per_node=2 scripts/train.py \
+#     paths.train_bin=/data/... paths.valid_bin=/data/paloma/... \
+#     training.wandb_entity=<entity> training.wandb_project=cs336-data
 
 paths:
-  # Set to your data, tokenized with GPT-2 tokenizer!
-  train_bin: /data/c-nband/a1-basics/owt_train_gpt2_tok.bin
-  
-  # The validation set which we have already tokenized with GPT-2 tokenizer, don't change this!
-  valid_bin: /data/paloma/tokenized_paloma_c4_100_domains_validation.bin
-  
+  # Filtered + tokenized CC WET data (GPT-2 tokenizer, uint16 binary)
+  train_bin: /Users/pangshengwei/Documents/Projects/stanford-cs336-llms/assignment4-data/tokenized/train_split.bin
+
+  # Local validation split (90/10 from our filtered CC data).
+  # On the cluster, point this to /data/paloma/tokenized_paloma_c4_100_domains_validation.bin
+  valid_bin: /Users/pangshengwei/Documents/Projects/stanford-cs336-llms/assignment4-data/tokenized/val.bin
+
   model_output: output/your_data
 
 training:
-  wandb_entity: ???  # Set to your wandb entity, e.g. pliang
+  wandb_entity: null  # Set to your wandb entity, e.g. training.wandb_entity=<entity>
   wandb_project: cs336-data
+  # MPS settings for local MacBook Pro
+  device: mps
+  compile: false       # torch.compile has limited MPS support
+  train_batch_size: 32
+  dtype: bfloat16      # bfloat16 supported on MPS since PyTorch 2.4
